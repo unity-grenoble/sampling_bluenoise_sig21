@@ -7,17 +7,21 @@
 
 
 // Constants definition
-constexpr int D = 2 * 8; // Must be a multiple of 2
-constexpr int TotalD = 64; // The total number of dimensions exported: must be a power of two
+constexpr int D = 2 * 1; // Must be a multiple of 2
 
 constexpr int MaskSize = 128; // Must be a power of two
 constexpr int PixelCount = MaskSize * MaskSize;
 constexpr int DistanceMatrixSize = PixelCount * (PixelCount + 1) / 2;
 
+enum SamplerType {
+   OWEN,
+   RANK1,
+};
+
 class Optimizer {
 public:
     /// \brief Default constructor.
-    Optimizer(int spp);
+    Optimizer(int spp, SamplerType type=SamplerType::RANK1);
 
     /// \brief Free the GL ressources before the destruction of the object.
     /// \note This is required because otherwise the context will be destroyed before the ressources are freed.
@@ -41,6 +45,10 @@ public:
     /// \brief Export the latest mask as a header.
     /// \param filename The name of the file to export the mask in.
     void exportMaskAsHeader(const char *filename) const;
+
+    /// \brief Export the latest mask as a ASCII tile.
+    /// \param filename The name of the file to export the mask in.
+    void exportMaskAsTile(const char *filename) const;
 
 private:
     int m_dimension = 0;
@@ -67,6 +75,7 @@ private:
 
     int m_spp;
 
+    SamplerType m_type;
 
     //// Refactoring functions ////
 

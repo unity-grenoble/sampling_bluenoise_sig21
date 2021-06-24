@@ -8,14 +8,14 @@
 
 #include <GLFW/glfw3.h>
 
-
 using std::chrono::duration_cast;
 using std::chrono::milliseconds;
 using std::chrono::steady_clock;
 
-bool handleArgs(int argc, char **argv, int &spp, int &threshold);
+bool handleArgs(int argc, const char **argv, int &spp, int &threshold, std::string& stype, std::string& output);
 
-int main(int argc, char **argv) {
+int main(int argc, const char **argv) {
+
     // GLFW initialization
     if(!glfwInit()) {
         ERROR << "There was an issue during the initialization of GLFW" << std::endl;
@@ -62,49 +62,58 @@ int main(int argc, char **argv) {
     }
 
     int spp, threshold;
-    if(!handleArgs(argc, argv, spp, threshold)) {
+    std::string stype, output;
+    if(!handleArgs(argc, argv, spp, threshold, stype, output)) {
         ERROR << "Invalid arguments, possible usages :\n"
                  "1) ./Optimizer\n"
-                 "2) ./Optimizer SampleCount Threshold\n"
+                 "2) ./Optimizer SampleCount Threshold {OWEN,RANK1} filename\n"
                  "Note: 1 <= SampleCount <= 4096 and 1 <= Threshold"
               << std::endl;
 
         return INVALID_ARGUMENTS;
     }
 
-    Optimizer optimizer(spp);
+    SamplerType type = SamplerType::RANK1;
+    if(stype == "OWEN") {
+       type = SamplerType::OWEN;
+    } else if(stype == "RANK1") {
+       type = SamplerType::RANK1;
+    } else {
+       ERROR << "Unknown sampler!" << std::endl;
+       return INVALID_ARGUMENTS;
+    }
+
+    Optimizer optimizer(spp, type);
     Display display(optimizer.displayTexture());
 
     int dispatchCount = 0;
     int prevAcceptedSwaps = 0;
     auto start = steady_clock::now();
 
+    uint32_t nb_swaps = 0u;
     while(!glfwWindowShouldClose(window)) {
         optimizer.run();
         glFinish();
 
         if(duration_cast<milliseconds>(steady_clock::now() - start).count() > 100) {
             display.draw();
-            LOG << "Accepted permutations: " << std::setw(6) << optimizer.acceptedSwapCount() << '\r' << std::flush;
+            uint32_t cur_nb_swaps  = optimizer.acceptedSwapCount();
+            uint32_t diff_nb_swaps = cur_nb_swaps-nb_swaps;
+            LOG << "Total accepted permutations: " << std::setw(6) << cur_nb_swaps
+                << " | This step: " << std::setw(6) << diff_nb_swaps
+                << '\r' << std::flush;
 
             glfwSwapBuffers(window);
             glfwPollEvents();
-
-            start = std::chrono::steady_clock::now();
-        }
-
-        // Check if the number of swaps for the current pair of dimension is below a threshold
-        if(++dispatchCount == 100) {
-            int acceptedSwaps = optimizer.acceptedSwapCount();
-
-            if(acceptedSwaps - prevAcceptedSwaps < threshold) {
+            
+            if(diff_nb_swaps < threshold) {
                 LOG << "\n\n";
                 if(!optimizer.nextDimensions())
                     glfwSetWindowShouldClose(window, true);
             }
 
-            prevAcceptedSwaps = acceptedSwaps;
-            dispatchCount = 0;
+            nb_swaps = cur_nb_swaps;
+            start = std::chrono::steady_clock::now();
         }
     }
 
@@ -112,6 +121,7 @@ int main(int argc, char **argv) {
 
     // Save the last mask
     optimizer.exportMaskAsHeader(PROJECT_ROOT "mask.h");
+    optimizer.exportMaskAsTile(output.c_str());
 
     // Cleanup
     display.freeGLRessources();
@@ -123,11 +133,13 @@ int main(int argc, char **argv) {
     return SUCCESS;
 }
 
-bool handleArgs(int argc, char **argv, int &spp, int &threshold) {
+bool handleArgs(int argc, const char **argv, int &spp, int &threshold, std::string& stype, std::string& output) {
     if(argc == 1) {
         spp = 16;
         threshold = 15;
-    } else if(argc == 3) {
+        stype = "RANK1";
+        output = PROJECT_ROOT + std::string("tile.samples");
+    } else if(argc == 5) {
         spp = std::atoi(argv[1]);
         if(spp <= 0 || spp > 4096)
             return false;
@@ -141,6 +153,9 @@ bool handleArgs(int argc, char **argv, int &spp, int &threshold) {
                  << std::endl;
             threshold = 15;
         }
+
+        stype = argv[3];
+        output = argv[4];
     } else
         return false;
 

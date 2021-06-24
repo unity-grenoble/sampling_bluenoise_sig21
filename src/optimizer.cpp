@@ -1,5 +1,20 @@
+
 #include <optimizer.hpp>
+
+#include <cstdint>
+#include <climits>
+
 #include <sobol_4096spp_256d.h>
+#include <rank1_1024spp_10d.h>
+
+/* Generate a floating point value from 'x'
+*/
+static inline
+float binary_to_float(uint32_t x)
+{
+	double r = double(x) / (1ull << (CHAR_BIT*sizeof(uint32_t)));
+	return float(r);
+}
 
 #include <omp.h>
 
@@ -9,11 +24,18 @@ constexpr int HeavisideCount = 1024;
 constexpr int SwapAttemptsDivisor = 2; // Swap attempts count = Pixel count / (2 * swapAttemptsDivisor)
 constexpr int WorkGroupCount = PixelCount / (32 * 2 * SwapAttemptsDivisor);
 
-Optimizer::Optimizer(int spp)
+Optimizer::Optimizer(int spp, SamplerType type)
     : m_program(buildShaders({PROJECT_ROOT "shaders/optimizer.comp"}, {GL_COMPUTE_SHADER},
                              {{"D", D}, {"MASK_SIZE", MaskSize}})),
-      m_scrambles(D * PixelCount), m_spp(spp) {
+      m_scrambles(D * PixelCount), m_spp(spp), m_type(type) {
     LOG << "Initializing the optimizer..." << std::endl;
+    if(m_type == SamplerType::OWEN) {
+       LOG << "Using Owen + XOR sampler" << std::endl;
+    } else if(m_type == SamplerType::RANK1) {
+       LOG << "Using Rank1 + CPR sampler" << std::endl;
+    } else {
+       ERROR << "Unknown sampler" << std::endl;
+    }
 
     m_generator.seed(std::random_device{}());
 
@@ -88,7 +110,11 @@ void Optimizer::exportMaskAsHeader(const char *filename) const {
     std::uniform_int_distribution<uint32_t> distribution;
 
     file << "#pragma once\n\n";
-    file << "#include \"sobol_4096spp_256d.h\"\n\n\n";
+    if(m_type == SamplerType::OWEN) {
+      file << "#include \"sobol_4096spp_256d.h\"\n\n\n";
+    } else if(m_type == SamplerType::RANK1) {
+      file << "#include \"rank1_1024spp_10d.h\"\n\n\n";
+    }
 
     // Dump the scrambling keys
     file << "static const uint32_t scramblingKeys[" << MaskSize << "][" << MaskSize << "][" << 256 << "] = {\n";
@@ -126,12 +152,42 @@ void Optimizer::exportMaskAsHeader(const char *filename) const {
     // Dump the sampling function
     file << "float sample(int i, int j, int sampleID, int d) {\n";
     file << "    i = i & " << (MaskSize - 1) << ";\n";
-    file << "    j = j & " << (MaskSize - 1) << ";\n";
-    file << "    d = d & " << TotalD - 1 << ";\n\n";
-    file << "    uint32_t scramble = scramblingKeys[i][j][d];\n";
-    file << "    uint32_t sample = sequence[sampleID][d] ^ scramble;\n\n";
-    file << "    return (sample + 0.5f) / " << (1ULL << 32) << "ULL;\n";
+    file << "    d = d & 1;\n\n";
+    if(m_type == SamplerType::OWEN) {
+       file << "    uint32_t scramble = scramblingKeys[i][j][d];\n";
+       file << "    uint32_t sample = sobol_sequence[sampleID][d] ^ scramble;\n\n";
+       file << "    return (sample + 0.5f) / " << (1ULL << 32) << "ULL;\n";
+    } else if(m_type == SamplerType::RANK1) {
+       file << "    float scramble = float(double(scramblingKeys[i][j][d]) / double(" << (1ULL << 32) << "ULL));\n";
+       file << "    float sample = fmodf(rank1_sequence[sampleID][d] + scramble, 1.0f);\n\n";
+       file << "    return sample;\n";
+    }
     file << "}\n\n";
+}
+
+void Optimizer::exportMaskAsTile(const char *filename) const {
+    std::ofstream file(filename);
+    file << MaskSize << std::endl;
+    file << m_spp << std::endl;
+    file << D << std::endl;
+
+    for(uint32_t j=0; j<MaskSize; ++j) {
+        for(uint32_t i=0; i<MaskSize; ++i) {
+            uint32_t index = D * (i * MaskSize + j);
+            for(uint32_t k=0; k<uint32_t(m_spp); ++k) {
+                for(uint32_t d=0; d<D; ++d) {
+                   float sample;
+                   if(m_type == SamplerType::OWEN) {
+                      sample = binary_to_float(sobol_sequence[k][d] ^ m_scrambles[index + d]);
+                   } else if(m_type == SamplerType::RANK1) {
+                      float shift  = binary_to_float(m_scrambles[index + d]);
+                      sample = fmodf(rank1_sequence[k][d] + shift, 1.0f);
+                   }
+                   file << sample << std::endl;
+                }
+            }
+        }
+    }
 }
 
 void Optimizer::generatePermutationsSSBO() {
@@ -277,7 +333,6 @@ void Optimizer::generateDistanceMatrix(GLuint *scrambles) {
                     squaredL2Norm(estimates.data() + offset_i, estimates.data() + offset_j, HeavisideCount);
 
                 GLuint index = j + i * PixelCount - i * (i + 1) / 2;
-
                 distanceMatrix[index] = distance; 
             }
         }
@@ -307,13 +362,18 @@ std::vector<GLfloat> Optimizer::preintegrateDisplay(GLuint *scrambling) const {
     std::vector<GLfloat> result(PixelCount);
 
     double variance = 0.0;
-    float Div = 1.f / (1ULL << 32);
     for(int i = 0; i < PixelCount; ++i) {
         double sum = 0.0;
 
         for(int j = 0; j < m_spp; ++j) {
-            float x = ((sequence[j][m_dimension] ^ scrambling[4 * i]) + 0.5f) * Div;
-            float y = ((sequence[j][m_dimension + 1] ^ scrambling[4 * i + 1]) + 0.5f) * Div;
+           float x=0.0f, y=0.0f;
+           if(m_type == SamplerType::OWEN) {
+              x = binary_to_float(sobol_sequence[j][m_dimension + 0] ^ scrambling[4 * i + 0]);
+              y = binary_to_float(sobol_sequence[j][m_dimension + 1] ^ scrambling[4 * i + 1]);
+           } else if(m_type == SamplerType::RANK1) {
+              x = fmodf(rank1_sequence[j][m_dimension + 0] + binary_to_float(scrambling[4 * i + 0]), 1.0f);
+              y = fmodf(rank1_sequence[j][m_dimension + 1] + binary_to_float(scrambling[4 * i + 1]), 1.0f);
+           }
             sum += std::exp(-x * x - y * y);
         }
 
@@ -330,20 +390,30 @@ std::vector<GLfloat> Optimizer::preintegrateDisplay(GLuint *scrambling) const {
     return result;
 }
 
-float Optimizer::integrateHeaviside(GLuint scramble[2], const Heaviside &heaviside) const {
-    const float SampleWeight = 1.f / m_spp;
-    const float Div = 1.f / (1ULL << 32);
+float Optimizer::integrateHeaviside(GLuint scramble[2], float heavisides[4]) const {
+    const double SampleWeight = 1.f / m_spp;
+
+    // Orientation vector
+    float n[2] = {heavisides[0], heavisides[1]};
+
+    float x = heavisides[2];
+    float y = heavisides[3];
 
     double sum = 0.f;
+    double sample[2] = {0.0f, 0.0f};
     for(int k = 0; k < m_spp; ++k) {
-        double sample[2] = {((sequence[k][m_dimension] ^ scramble[0]) + 0.5) * Div,
-                            ((sequence[k][m_dimension + 1] ^ scramble[1]) + 0.5) * Div};
+       if(m_type == SamplerType::OWEN) {
+          sample[0] = binary_to_float(sobol_sequence[k][m_dimension + 0] ^ scramble[0]);
+          sample[1] = binary_to_float(sobol_sequence[k][m_dimension + 1] ^ scramble[1]);
+       } else if(m_type == SamplerType::RANK1) {
+          sample[0] = fmod(rank1_sequence[k][m_dimension + 0] + binary_to_float(scramble[0]), 1.0);
+          sample[1] = fmod(rank1_sequence[k][m_dimension + 1] + binary_to_float(scramble[1]), 1.0);
+       }
+       double v[2] = {sample[0] - x, sample[1] - y};
 
-        double v[2] = {sample[0] - heaviside.px, sample[1] - heaviside.py};
+       double eval = (v[0] * n[0] + v[1] * n[1] < 0.f ? 1.f : 0.f);
 
-        double eval = (v[0] * heaviside.nx + v[1] * heaviside.ny < 0.f ? 1.f : 0.f);
-
-        sum += eval;
+       sum += eval;
     }
 
     return float(sum * SampleWeight);
