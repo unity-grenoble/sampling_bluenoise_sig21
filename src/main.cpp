@@ -79,8 +79,8 @@ int main(int argc, const char **argv) {
     } else if(stype == "RANK1") {
        type = SamplerType::RANK1;
     } else {
-       ERROR << "Unknown sampler!" << std::endl;
-       return INVALID_ARGUMENTS;
+       ERROR << "Unknown sampler! Using Rank! by default" << std::endl;
+       type = SamplerType::RANK1;
     }
 
     Optimizer optimizer(spp, type);

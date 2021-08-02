@@ -2,14 +2,10 @@
 
 ## What is this ? 
 
-Hello there ! This application implements the optimization process described in [A Low-Discrepancy Sampler that Distributes Monte Carlo Errors as a Blue Noise in Screen Space](https://belcour.github.io/blog/research/publication/2019/06/17/sampling-bluenoise.html), Heitz et al. (2019) on the GPU (minus the ranking part that allows for progressive bluenoises). 
-It produces 128 by 128 masks of 16 optimized scramble values that can be used to scramble the owen sobol sequence provided in ```include/sobol_4096spp_256d.h```. 
+Hello there ! This application implements the optimization process described in [Lessons Learned and Improvements when Building Screen-Space Samplers with Blue-Noise Error Distribution ](https://unity-grenoble.github.io/website/publication/2021/06/24/sampling_bluenoise_sig21.html), Belcour and Heitz (2021) on the GPU. It permits to optimize tiles of 2D quasi-random sequences (either Owen scrambled Sobol with XOR scrambling or a Rank-1 lattice with Cranley-Patterson Rotations).
 A sampling function is provided with the optimized mask. 
 Note that this function returns floats in [0, 1] (1 included because of rounding approximations). This might be an important detail if you're using this sample function in a PBRT sampler. 
 A Mitsuba v0.6 sampler is also provided at the root of the project (*ldbnsampler.cpp*), so that you only need to copy and paste it along with a mask.h header (resulting from the optimization) in Mitsuba samplers' folder (*src/samplers*). 
-
-In case you want to optimize a mask for more or less than those 16 values, feel free to edit the constant ```D``` set in ```include/optimizer.hpp``` (just make sure it remains a multiple of two).
-
 
 ## Requirements
 
@@ -51,16 +47,16 @@ The second parameter is a threshold that must be strictly greather than zero, it
 
 Therefore you can use:
 ```
-./Optimizer 16 15
+./Optimizer 16 15 RANK1 file.samples
 ```
-to launch the optimization for 16 samples per sequence and the default halt condition.
+to launch the optimization for a Rank-1 lattice sequence at 16 samples per sequence and the default halt condition. The resulting samples will be save in an ASCII file `file.samples`.
 
 The optimization is done by pairs of dimensions. The condition that must be fulfilled to halt the optimization for a given pair of dimension is for the number of accepted permutations in a batch of 100 dispatches to be lower than the threshold (each compute shader dispatch attemps 4096 permutations). Note that the process can take several minutes (or even hours!) to complete depending on your GPU.
 The application will close when the 12 dimensions are optimized and the scrambling mask (and a sampling function) is exported at the root of the project in a header file (mask.h).
 
 
 ## Sample result
-Here is the kind of result that can be obtained with the method described in that paper at 16 samples per pixel on the *Boxed* scene (rendered with [Mitsuba](http://www.mitsuba-renderer.org)):
+Here is the kind of result that can be obtained at 16 samples per pixel on the *Boxed* scene (rendered with [Mitsuba](http://www.mitsuba-renderer.org)):
 
 | Traditional whitenoise sampler                                                           | [Bluenoise sampler](https://belcour.github.io/blog/research/publication/2019/06/17/sampling-bluenoise.html) |
 | ---------------------------------------------------------------------------------------- |:-----------------------------------------------------------------------------------------------------------:|

@@ -127,14 +127,7 @@ void Optimizer::exportMaskAsHeader(const char *filename) const {
             for(int d = 0; d < D; ++d) {
                 file << m_scrambles[index + d] << 'U';
 
-                if(d != TotalD - 1)
-                    file << ", ";
-            }
-
-            for(int d = D; d < TotalD; ++d) {
-                file << distribution(m_generator) << 'U';
-
-                if(d != TotalD - 1)
+                if(d != D - 1)
                     file << ", ";
             }
             file << "}";
@@ -390,14 +383,14 @@ std::vector<GLfloat> Optimizer::preintegrateDisplay(GLuint *scrambling) const {
     return result;
 }
 
-float Optimizer::integrateHeaviside(GLuint scramble[2], float heavisides[4]) const {
+float Optimizer::integrateHeaviside(GLuint scramble[2], Heaviside heavisides) const {
     const double SampleWeight = 1.f / m_spp;
 
     // Orientation vector
-    float n[2] = {heavisides[0], heavisides[1]};
+    float n[2] = {heavisides.nx, heavisides.ny};
 
-    float x = heavisides[2];
-    float y = heavisides[3];
+    float x = heavisides.px;
+    float y = heavisides.py;
 
     double sum = 0.f;
     double sample[2] = {0.0f, 0.0f};
