@@ -5,7 +5,7 @@
 #include <climits>
 
 #include <sobol_4096spp_256d.h>
-#include <rank1_1024spp_10d.h>
+#include <rank1_4096spp_10d.h>
 
 /* Generate a floating point value from 'x'
 */
