@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <climits>
+#include <cstring>
 
 #include <sobol_4096spp_256d.h>
 #include <rank1_4096spp_10d.h>
@@ -117,7 +118,7 @@ void Optimizer::exportMaskAsHeader(const char *filename) const {
     }
 
     // Dump the scrambling keys
-    file << "static const uint32_t scramblingKeys[" << MaskSize << "][" << MaskSize << "][" << 256 << "] = {\n";
+    file << "static const uint32_t scramblingKeys[" << MaskSize << "][" << MaskSize << "][" << 2<< "] = {\n";
     for(int i = 0; i < MaskSize; ++i) {
         file << "    {";
         for(int j = 0; j < MaskSize; ++j) {
@@ -145,7 +146,9 @@ void Optimizer::exportMaskAsHeader(const char *filename) const {
     // Dump the sampling function
     file << "float sample(int i, int j, int sampleID, int d) {\n";
     file << "    i = i & " << (MaskSize - 1) << ";\n";
+    file << "    j = j & " << (MaskSize - 1) << ";\n";
     file << "    d = d & 1;\n\n";
+    file << "    sampleID = sampleID & 1023;\n\n";
     if(m_type == SamplerType::OWEN) {
        file << "    uint32_t scramble = scramblingKeys[i][j][d];\n";
        file << "    uint32_t sample = sobol_sequence[sampleID][d] ^ scramble;\n\n";
